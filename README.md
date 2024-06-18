@@ -27,3 +27,6 @@ Currently we make and destry a session every time the script is called.
   - switch to just destroy a particular session
   - switch to use a current sesison
   - distinct error response for session expired
+
+
+###Radius support
