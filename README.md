@@ -14,7 +14,7 @@ Currently it handles a few different error states within the code and all the sa
   - reactive power
   - active power
   - apparent power
-  - environmental status?
+  - environmental status? (HPE E2D53A)
   - device status
 
 ### Setters for:
