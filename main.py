@@ -6,17 +6,18 @@ import urllib.parse as parse
 import re
 import sys
 
+ports = [{} for x in range(0,24)]
+
 def convert_to_iso8859_1(data):
     try:
         return data.encode('iso-8859-1')
     except UnicodeEncodeError:
         return None
 
-
 def logout(sessionID, ip_addr):
     response = requests.get(f'http://{ip_addr}/config/gateway?page=cgi_logout&sessionId={sessionID}')
     if response.status_code == 200:
-        #print(f'Cleaned up Session {sessionID}')
+        print(f'Cleaned up Session {sessionID}')
         return 'logout'
     else:
         sys.exit('failed to terminate session')
@@ -35,7 +36,7 @@ def generate_session_key(login_user, realm, password_user, nonce, cnonce):
     if password_challenge is None:
         password_challenge = password_user.encode('utf-8')
 
-    #--------------Don't change anything between here and the next break, this is a house of cards to make the authentication happy---#
+    #---Don't change anything between here and the next break, this is a house of cards to make the authentication happy---#
     #needs to be bytes, NOT a format string
     combined = login_challenge + b':' + realm_challenge + b':' + password_challenge
     #extremely critical this is just digest, we need the raw binary
@@ -49,7 +50,7 @@ def generate_session_key(login_user, realm, password_user, nonce, cnonce):
     #the session key is what we use to authenticate the session, once it's passed the session is auth'd and we no longer need the key
     #and we can just use the sessionID. definitely a possible attack vector here
     return session_key
-    #---------------------------------------------------------------------------------------------------------------------------------#
+    #----------------------------------------------------------------------------------------------------------------------#
 
 def manageResultAuthentication(loginuser, sessionID):
     #print('managing login for : ' + loginuser)
@@ -120,21 +121,21 @@ def responseChallenge(loginUser, passwordUser, sessionID, data, ip_addr):
         if('error' in resp_json):
             match resp_json['error']:
                 case 3336:
-                    sys.exit(f'HP Error:{resp_json['error']} Same User')
+                    sys.exit(f"HP Error:{resp_json['error']} Same User")
                 case 3332:
-                    sys.exit(f'HP Error:{resp_json['error']} Session Expired')
+                    sys.exit(f"HP Error:{resp_json['error']} Session Expired")
                 case 3334:
-                    sys.exit('HP Error: 3334 too many connections')
+                    sys.exit("HP Error: 3334 too many connections")
                 case 3337 | 3338 | 3341 | 3347 | 3348 | 3351 | 3352 | 3407 | 3442 | 3443: 
-                    sys.exit(f'HP Error:{resp_json['error']} Permission error')
+                    sys.exit(f"HP Error:{resp_json['error']} Permission error")
                 case 3353 | 3444:
-                    sys.exit(f'HP Error:{resp_json['error']} Authentication configuration error')
+                    sys.exit(f"HP Error:{resp_json['error']} Authentication configuration error")
                 case 3342 | 3354 | 3355 | 3356 | 3372 | 3376 | 3441 | 3447 | 3452:
-                    sys.exit(f'HP Error:{resp_json['error']} Server conneciton error')
+                    sys.exit(f"HP Error:{resp_json['error']} Server conneciton error")
                 case 11:
-                    sys.exit(f'HP Error:{resp_json['error']} Session expired')
+                    sys.exit(f"HP Error:{resp_json['error']} Session expired")
                 case _:
-                    sys.exit(f'HP error:{resp_json['error']}')
+                    sys.exit(f"HP error:{resp_json['error']}")
         if([5] in resp_json['data']):
             if(resp_json['data'][5] == 'challenge'):
                 sys.exit('invalid username or password')
@@ -157,6 +158,44 @@ def switch_pdu(ip_addr, user, password, outlet, state): #outlet is an int betwee
         sys.exit('please enter a valid state')
     logout(sessionID, ip_addr)
 
-switch_pdu(sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
+def get_outlet_states(ip_addr, user, password):
+    sessionID = login_and_get_session_id(user, password, ip_addr)
+    response = requests.get(f"http://{ip_addr}/config/gateway?page=cgi_pdu_outlets&sessionId={sessionID}")
+    response_text = response.text
+    response_text = response_text.replace("'", '"')
+    response_text = re.sub(r'\btrue\b', 'true', response_text)
+    response_text = re.sub(r'\bfalse\b', 'false', response_text)
+    response_text = re.sub(r'(\w+):', r'"\1":', response_text)
+    resp_json = json.loads(response_text)
+    print(f"outlet l1-3{resp_json['data'][0][2][0]}")
+    print(f"outlet l1-4{resp_json['data'][0][3][0]}")
+    n = 0
+    for i in ports:
+        i['HPname'] = resp_json['data'][0][n][0][0]
+        i['attacheDevice'] = resp_json['data'][0][n][0][1]
+        i['powerState'] = 'on' if resp_json['data'][0][n][0][3] == 1 else 'off'
+        print(f'outlet {n}, is {i}')
+        n += 1
+    logout(sessionID, ip_addr)
+
+def get_overview(ip_addr, user, password):
+    sessionID = login_and_get_session_id(user, password, ip_addr) 
+    response = requests.get(f"http://{ip_addr}/config/gateway?page=cgi_overview&sessionId={sessionID}")
+    response_text = response.text
+    response_text = response_text.replace("'", '"')
+    response_text = re.sub(r'\btrue\b', 'true', response_text)
+    response_text = re.sub(r'\bfalse\b', 'false', response_text)
+    response_text = re.sub(r'(\w+):', r'"\1":', response_text)
+    resp_json = json.loads(response_text)
+    print(resp_json)
+    logout(sessionID, ip_addr)
+
+match sys.argv[1]:
+    case 'set_outlet_state':
+        switch_pdu(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6]) #ip address, username, password, outlet number[1-24], state[on,off]
+    case 'get_outlet_states':
+        get_outlet_states(sys.argv[2], sys.argv[3], sys.argv[4]) #ip address, username, password
+    case 'get_overview':
+        get_overview(sys.argv[2], sys.argv[3], sys.argv[4]) #ip address, username, password
 
 sys.exit(0)
