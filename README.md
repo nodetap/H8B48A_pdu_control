@@ -16,6 +16,8 @@ Currently it handles a few different error states within the code and all the sa
 
 ### Turn PDU into a class
 
+### Figure out stateful access
+
 ### Getters for: 
   - voltage
   - current
