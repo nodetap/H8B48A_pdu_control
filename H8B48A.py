@@ -136,10 +136,13 @@ class H8B48A:
             return None
 
     def set_outlet_state(self, outlet, state): #outlet is an int between 1 and 24, state is a string, either off or on
-        outlet = int(outlet)
+        try:
+            outlet = int(outlet)
+        except:
+            raise Exception(f"Invalid outlet: {outlet}. The only valid outlets are 1-24.")
         if(outlet < 1 or outlet > 24):
             sys.exit(f'{outlet} is not a valid port id')
-            raise exception(f"Invalid outlet: {outlet}. The only valid outlets are 1-24.")
+            raise Exception(f"Invalid outlet: {outlet}. The only valid outlets are 1-24.")
         elif(state == 'on'):
             requests.post(f'http://{self.ip_addr}/config/set_object_mass.xml?sessionId={self.sessionID}', f"<SET_OBJECT><OBJECT name='PDU.OutletSystem.Outlet[{outlet}].DelayBeforeStartup'>0</OBJECT></SET_OBJECT>")
         elif(state == 'off'):
