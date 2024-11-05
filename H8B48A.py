@@ -13,9 +13,10 @@ class H8B48A:
         self.ip_addr = ip_addr
         self.username = username
         self.password = password
-        self.sessionID = self.create_session_id()
+        self.create_session_id()
 
     def create_session_id(self):
+        print("Creating session")
         response = requests.get(f'http://{self.ip_addr}/config/gateway?page=cgi_authentication&login={parse.quote(base64.b64encode(self.username.encode("ascii")).decode())}')
         if (response.status_code == 200):
             success_resp = response.text[1:response.text.index('data')-2]
@@ -34,6 +35,7 @@ class H8B48A:
                 raise NotImplementedError("This is an undefined state.")
             elif success_resp_formatted['success'] == 'true' and response_data_formatted['data'][5] == 'challenge':
                 self.sessionID = response_data_formatted['data'][0]
+                print(f"Session ID received: {self.sessionID}.")
                 self.responseChallenge(response_data_formatted['data'][6])
             elif success_resp_formatted['success'] == 'true' and response_data_formatted['data'][5] == 'radiusChallenge':
                 raise NotImplementedError("Radius is not implimented")
@@ -41,14 +43,6 @@ class H8B48A:
                 raise NotImplementedError("This state is undefined or otherwise not implimented")
         else:
             raise Exception(f'http response {response.status_code}')
-    
-    def logout(self):
-        response = requests.get(f'http://{self.ip_addr}/config/gateway?page=cgi_logout&sessionId={self.sessionID}')
-        if response.status_code == 200:
-            print(f'Cleaned up Session {self.sessionID}')
-            return 'logout'
-        else:
-            raise Exception('failed to terminate session')
 
     def responseChallenge(self, data):
         szRealm = data[0]
@@ -57,7 +51,8 @@ class H8B48A:
         szUri = data[3]
         szQop = data[4]
         uiNcValue = "00000001"
-        sessionKey = generate_session_key(szRealm,szNonce,szCnonce)
+        sessionKey = self.generate_session_key(szRealm,szNonce,szCnonce)
+        print(f"Sesison key generated: {sessionKey}")
         a2Client = "AUTHENTICATE:" + szUri 
         if (szQop != "auth"): 
             a2Client = "AUTHENTICATE:" + szUri + ":00000000000000000000000000000000"
@@ -100,9 +95,10 @@ class H8B48A:
                     raise Exception('Invalid username or password')
                     #possible to retry here: responseChallenge(loginUser, passwordUser, resp_json['data'][0], resp_json['data'][6])
             elif(resp_json['success'] and resp_json['data'][3] != 0):
-                return 'success'
+                print(f"Challenge finished and authentication successful. SessionID: {self.sessionID}")
             else:
                 raise Exception('Data mangled.')
+
     def generate_session_key(self, realm, nonce, cnonce):
         #these are just here to support internationalization
         login_challenge = self.convert_to_iso8859_1(self.username)
@@ -132,7 +128,7 @@ class H8B48A:
         #and we can just use the sessionID. definitely a possible attack vector here
         return session_key
         #----------------------------------------------------------------------------------------------------------------------#
-    
+
     def convert_to_iso8859_1(self, data):
         try:
             return data.encode('iso-8859-1')
@@ -140,16 +136,19 @@ class H8B48A:
             return None
 
     def set_outlet_state(self, outlet, state): #outlet is an int between 1 and 24, state is a string, either off or on
+        outlet = int(outlet)
         if(outlet < 1 or outlet > 24):
             sys.exit(f'{outlet} is not a valid port id')
+            raise exception(f"Invalid outlet: {outlet}. The only valid outlets are 1-24.")
         elif(state == 'on'):
             requests.post(f'http://{self.ip_addr}/config/set_object_mass.xml?sessionId={self.sessionID}', f"<SET_OBJECT><OBJECT name='PDU.OutletSystem.Outlet[{outlet}].DelayBeforeStartup'>0</OBJECT></SET_OBJECT>")
         elif(state == 'off'):
             requests.post(f'http://{self.ip_addr}/config/set_object_mass.xml?sessionId={self.sessionID}', f"<SET_OBJECT><OBJECT name='PDU.OutletSystem.Outlet[{outlet}].DelayBeforeShutdown'>0</OBJECT></SET_OBJECT>")
         else:
-            sys.exit('please enter a valid state')
-    
+            raise Exception(f"Invalid outlet state: {state}. The only valid states are 'off' and 'on'")
+
     def get_outlet_states(self):
+        print(f"Getting outlet states for sessionID: {self.sessionID}")
         response = requests.get(f"http://{self.ip_addr}/config/gateway?page=cgi_pdu_outlets&sessionId={self.sessionID}")
         response_text = response.text
         response_text = response_text.replace("'", '"')
@@ -157,16 +156,20 @@ class H8B48A:
         response_text = re.sub(r'\bfalse\b', 'false', response_text)
         response_text = re.sub(r'(\w+):', r'"\1":', response_text)
         resp_json = json.loads(response_text)
-        print(f"outlet l1-3{resp_json['data'][0][2][0]}")
-        print(f"outlet l1-4{resp_json['data'][0][3][0]}")
-        n = 0
-        for i in self.ports:
-            i['HPname'] = resp_json['data'][0][n][0][0]
-            i['attacheDevice'] = resp_json['data'][0][n][0][1]
-            i['powerState'] = 'on' if resp_json['data'][0][n][0][3] == 1 else 'off'
-            print(f'outlet {n}, is {i}')
-            n += 1
-
+        if 'error' in resp_json:
+            match resp_json['error']:
+                case 3335:
+                    raise Exception(f"SessionID does not exist: {self.sessionID}")
+        else:
+            print(f"outlet l1-3{resp_json['data'][0][2][0]}")
+            print(f"outlet l1-4{resp_json['data'][0][3][0]}")
+            n = 0
+            for i in self.ports:
+                i['HPname'] = resp_json['data'][0][n][0][0]
+                i['attacheDevice'] = resp_json['data'][0][n][0][1]
+                i['powerState'] = 'on' if resp_json['data'][0][n][0][3] == 1 else 'off'
+                print(f'outlet {n}, is {i}')
+                n += 1
 
     def get_overview(self):
         response = requests.get(f"http://{self.ip_addr}/config/gateway?page=cgi_overview&sessionId={self.sessionID}")
@@ -176,17 +179,29 @@ class H8B48A:
         response_text = re.sub(r'\bfalse\b', 'false', response_text)
         response_text = re.sub(r'(\w+):', r'"\1":', response_text)
         resp_json = json.loads(response_text)
-        print(resp_json)
+        if 'error' in resp_json:
+            match resp_json['error']:
+                case 3335:
+                    raise Exception(f"SessionID does not exist: {self.sessionID}")
+        else:
+            print(resp_json)
 
-pdu = H8B48A()
+    def logout(self):
+        response = requests.get(f'http://{self.ip_addr}/config/gateway?page=cgi_logout&sessionId={self.sessionID}')
+        if response.status_code == 200:
+            print(f'Cleaned up Session {self.sessionID}')
+            return 'logout'
+        else:
+            raise Exception('failed to terminate session')
 
 if __name__ == "__main__":
+    pdu = H8B48A('10.0.5.22', 'admin', 'admin')
     match sys.argv[1]:
         case 'set_outlet_state':
-            pdu.set_outlet_state(sys.argv[5], sys.argv[6]) #outlet number[1-24], state[on,off]
+            pdu.set_outlet_state(sys.argv[2], sys.argv[3]) #outlet number[1-24], state[on,off]
         case 'get_outlet_states':
-            pdu.get_outlet_states(sys.argv[2], sys.argv[3], sys.argv[4]) #ip address, username, password
+            pdu.get_outlet_states() 
         case 'get_overview':
-            pdu.get_overview(sys.argv[2], sys.argv[3], sys.argv[4]) #ip address, username, password
-
+            pdu.get_overview() 
+    pdu.logout()
 sys.exit(0)
