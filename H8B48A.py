@@ -175,12 +175,14 @@ class H8B48A:
                 n += 1
 
     def get_overview(self):
+        print(f"Getting overview for sessionID: {self.sessionID}")
         response = requests.get(f"http://{self.ip_addr}/config/gateway?page=cgi_overview&sessionId={self.sessionID}")
         response_text = response.text
         response_text = response_text.replace("'", '"')
         response_text = re.sub(r'\btrue\b', 'true', response_text)
         response_text = re.sub(r'\bfalse\b', 'false', response_text)
         response_text = re.sub(r'(\w+):', r'"\1":', response_text)
+        response_text = response_text.replace(',,','') #python /really/ doesn't like the double comma. json.loads barfs if it is passed.
         resp_json = json.loads(response_text)
         if 'error' in resp_json:
             match resp_json['error']:
