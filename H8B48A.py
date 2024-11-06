@@ -9,6 +9,18 @@ import sys
 class H8B48A:
     
     def __init__(self, ip_addr, username, password):
+        """
+            Initializing the connection here, the decision was made to create and authenticate a session during init so it takes in the data needed for that and
+            authenicates a sesison
+
+        Args:
+            ip_addr:str this should be the ip address (or hostname) of the PDU
+            username:str username to log into the PDU
+            password:str password to log into the PDU
+        Returns:
+            none
+
+        """
         self.ports = [{} for x in range(0,24)]
         self.ip_addr = ip_addr
         self.username = username
@@ -16,6 +28,15 @@ class H8B48A:
         self.create_session_id()
 
     def create_session_id(self):
+        """
+            Creates a session and gets a SessionID. then authenticates that sessionID with the server.
+
+        Args:
+            none
+        Returns:
+            none: raises exceptions to deal with issues.
+
+        """
         print("Creating session")
         response = requests.get(f'http://{self.ip_addr}/config/gateway?page=cgi_authentication&login={parse.quote(base64.b64encode(self.username.encode("ascii")).decode())}')
         if (response.status_code == 200):
@@ -45,6 +66,15 @@ class H8B48A:
             raise Exception(f'http response {response.status_code}')
 
     def responseChallenge(self, data):
+        """
+            The bulk of the authentication happens in this function. The authentication request is a pretty gnarly format string but should be relatively easy to parse.
+            Lots of bit manipulation going on here. Once this completes, our sessionID is authenticated and ready to be used to conduct transactions.
+
+        Args:
+            data:list data should be passed in from the session creation response as ['data'][6]
+        Returns:
+            none, but it raises exceptions to handle issues with the connection
+        """
         szRealm = data[0]
         szNonce = data[1]
         szCnonce = data[2]
@@ -100,6 +130,16 @@ class H8B48A:
                 raise Exception('Data mangled.')
 
     def generate_session_key(self, realm, nonce, cnonce):
+        """
+            This function is largely evil, I didn't like writing it and I dont like looking at it. but it works and mangles the right
+            bits to make authentication work with the server.
+        Args:
+            realm:str should be passed directly from what is received from the server during auth
+            nonce:str should be passed directly from what is received from the server during auth
+            cnonce:str should be passed directly from what is received from the server during auth
+        Returns:
+            the session key which we need to complete authentication
+        """
         #these are just here to support internationalization
         login_challenge = self.convert_to_iso8859_1(self.username)
         if login_challenge is None:
@@ -118,7 +158,7 @@ class H8B48A:
         combined = login_challenge + b':' + realm_challenge + b':' + password_challenge
         #extremely critical this is just digest, we need the raw binary
         md5_hash = hashlib.md5(combined).digest()
-        #yes, there are 100 more 'python' ways to do this, but it has to do things the "javascript way" 
+        #we have to do things the "javascript way" 
         #or the hash will fail and it will not auth
         md5_binary_string = ''.join(chr(byte) for byte in md5_hash)     
         a1 = f"{md5_binary_string}:{nonce}:{cnonce}"
@@ -130,12 +170,29 @@ class H8B48A:
         #----------------------------------------------------------------------------------------------------------------------#
 
     def convert_to_iso8859_1(self, data):
+        """
+            This function is used internally to check if a string can be encoded as iso-8859-1, does so if it can. If it can't, it returns none and the system
+            comes crashing down. this is a feature not a bug as the server can not handle chars that are not latin-1 encoded.
+        Args:
+            data:str
+        Returns:
+            iso-8851-1 encoded strings or none if its not possible to convert
+        """
         try:
             return data.encode('iso-8859-1')
         except UnicodeEncodeError:
             return None
 
-    def set_outlet_state(self, outlet, state): #outlet is an int between 1 and 24, state is a string, either off or on
+    def set_outlet_state(self, outlet, state):
+        """
+            Pulls down the current outlet states. Does a bit of formatting on them and dumps them to stdout. Handles some errors
+            in response from the server. More error handling needed. 
+        Args:
+            outlet:int|str  [1-9][1-9] (1-24)
+            state:str       either 'on' or 'off'
+        Returns:
+            TODO: build a return system so this data is actualy useful
+        """
         try:
             outlet = int(outlet)
         except:
@@ -151,6 +208,14 @@ class H8B48A:
             raise Exception(f"Invalid outlet state: {state}. The only valid states are 'off' and 'on'")
 
     def get_outlet_states(self):
+        """
+            Pulls down the current outlet states. Does a bit of formatting on them and dumps them to stdout. Handles some errors
+            in response from the server. More error handling needed
+        Args:
+            none
+        Returns:
+            TODO: build a return system so this data is actualy useful
+        """
         print(f"Getting outlet states for sessionID: {self.sessionID}")
         response = requests.get(f"http://{self.ip_addr}/config/gateway?page=cgi_pdu_outlets&sessionId={self.sessionID}")
         response_text = response.text
@@ -175,6 +240,14 @@ class H8B48A:
                 n += 1
 
     def get_overview(self):
+        """
+            Pulls down overview data from the overview API on the server. currently just passing it out to stdout as a python dict. Handles some errors
+            in response from the server. More error handling needed for non-200 status codes and other failures.
+        Args:
+            none
+        Returns:
+            TODO: build a return system so this data is actualy useful
+        """
         print(f"Getting overview for sessionID: {self.sessionID}")
         response = requests.get(f"http://{self.ip_addr}/config/gateway?page=cgi_overview&sessionId={self.sessionID}")
         response_text = response.text
@@ -192,10 +265,17 @@ class H8B48A:
             print(resp_json)
 
     def logout(self):
+        """
+            Passes the current sessionID up to the server to sever the connection. If we don't do this, the server will quickly stop accepting new connections. Raises
+            an exception if it gets any response but 200 from the server.
+        Args:
+            none
+        Returns:
+            none
+        """
         response = requests.get(f'http://{self.ip_addr}/config/gateway?page=cgi_logout&sessionId={self.sessionID}')
         if response.status_code == 200:
             print(f'Cleaned up Session {self.sessionID}')
-            return 'logout'
         else:
             raise Exception('failed to terminate session')
 
